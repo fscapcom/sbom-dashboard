@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>SBOM Dashboard</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet"
+          integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+    <link href="https://cdn.jsdelivr.net/npm/force-graph@1.51.0/src/force-graph.min.css" rel="stylesheet">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.0/chart.umd.min.js"
+            integrity="sha512-Y51n9mtKTVBh3Jbx5pZSJNDDMyY+yGe77DGtBPzRlgsf/YLCh13kSZ3JmfHGzYFCmOndraf0sQgfM654b7dJ3w=="
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+</head>
+
+<body>
+
+<header>
+    <nav class="navbar navbar-expand-lg bg-body-tertiary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="index.html">SBOM Dashboard</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+                    aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" aria-current="page" href="index.html">Overview</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="drift.html">Version Drift</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="graph.html">Dependency Graph</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+</header>
+
+<main>
+    <div class="container-fluid mt-4">
+
+        <!-- Filters -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row g-3">
+
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold" for="projectFilter">Project</label>
+                        <select id="projectFilter" class="form-select">
+                            <option value="">All projects</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold" for="licenseFilter">License</label>
+                        <select id="licenseFilter" class="form-select">
+                            <option value="">All licenses</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold" for="searchInput">Search (Component, License,
+                            Purl)</label>
+                        <input id="searchInput" type="text" class="form-control"
+                               placeholder="e.g. log4j, MIT, org.springframework">
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary -->
+        <div id="summary" class="text-muted mb-2"></div>
+        <div class="card mb-3">
+            <div class="card-body">
+                <h6 class="card-title mb-3">Components per project</h6>
+                <canvas id="projectChart" height="15"></canvas>
+            </div>
+        </div>
+
+        <!-- Detail Modal -->
+        <div class="modal fade" id="detailModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Component Details</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body" id="detailModalBody">
+                        <!-- filled via JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Table -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-striped table-hover" id="componentTable">
+                        <thead>
+                        <tr>
+                            <th scope="col" data-key="project_name">Project</th>
+                            <th scope="col" data-key="component_name">Component</th>
+                            <th scope="col" data-key="component_version">Version</th>
+                            <th scope="col" data-key="component_group">Group</th>
+                            <th scope="col" data-key="licenses">Licenses</th>
+                            <th scope="col" data-key="purl">PURL</th>
+                            <th scope="col" data-key="project_group">Project Group</th>
+                            <th scope="col" data-key="sbom_path">SBOM</th>
+                        </tr>
+                        </thead>
+                        <tbody id="tableBody">
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+        crossorigin="anonymous"></script>
+<script type="text/javascript">
+    const DATA_URL = "data/components.json";
+
+    let allComponents = [];
+    let filteredComponents = [];
+
+    let currentSortKey = "project_name";
+    let currentSortDir = "asc";
+
+    const projectFilterEl = document.getElementById("projectFilter");
+    const licenseFilterEl = document.getElementById("licenseFilter");
+    const searchInputEl = document.getElementById("searchInput");
+    const summaryEl = document.getElementById("summary");
+    const tableBodyEl = document.getElementById("tableBody");
+    const headerEls = document.querySelectorAll("th[data-key]");
+
+    let projectChart = null; // Chart.js instance
+
+    async function loadData() {
+        try {
+            const res = await fetch(DATA_URL, {cache: "no-store"});
+            if (!res.ok) {
+                console.error("Failed to load components.json:", res.status);
+                summaryEl.textContent = "Error loading data.";
+                return;
+            }
+            allComponents = await res.json();
+            console.log("[DEBUG] Loaded components:", allComponents.length);
+
+            buildProjectFilter();
+            buildLicenseFilter();
+            setupEvents();
+            applyFilters();
+            renderDriftAnalysis();
+        } catch (e) {
+            console.error(e);
+            summaryEl.textContent = "Error loading data (see console).";
+        }
+    }
+
+    function buildProjectFilter() {
+        const projects = [...new Set(allComponents.map(c => c.project_name || "Unknown"))].sort();
+        projects.forEach(p => {
+            const opt = document.createElement("option");
+            opt.value = p;
+            opt.textContent = p;
+            projectFilterEl.appendChild(opt);
+        });
+    }
+
+    function buildLicenseFilter() {
+        const licenses = new Set();
+        allComponents.forEach(c => {
+            (c.licenses || []).forEach(l => licenses.add(l));
+        });
+
+        Array.from(licenses).sort().forEach(l => {
+            const opt = document.createElement("option");
+            opt.value = l;
+            opt.textContent = l;
+            licenseFilterEl.appendChild(opt);
+        });
+    }
+
+    function setupEvents() {
+        projectFilterEl.addEventListener("change", applyFilters);
+        licenseFilterEl.addEventListener("change", applyFilters);
+
+        searchInputEl.addEventListener("input", () => {
+            window.clearTimeout(searchInputEl._debounceTimer);
+            searchInputEl._debounceTimer = window.setTimeout(applyFilters, 150);
+        });
+
+        headerEls.forEach(th => {
+            th.addEventListener("click", () => {
+                const key = th.dataset.key;
+                if (currentSortKey === key) {
+                    currentSortDir = currentSortDir === "asc" ? "desc" : "asc";
+                } else {
+                    currentSortKey = key;
+                    currentSortDir = "asc";
+                }
+                applyFilters();
+            });
+        });
+    }
+
+    function applyFilters() {
+        const project = projectFilterEl.value.trim().toLowerCase();
+        const license = licenseFilterEl.value.trim();
+        const search = searchInputEl.value.trim().toLowerCase();
+
+        filteredComponents = allComponents.filter(c => {
+            const projectName = (c.project_name || "").toLowerCase();
+            if (project && projectName !== project) return false;
+
+            if (license) {
+                const licList = (c.licenses || []);
+                if (!licList.includes(license)) return false;
+            }
+
+            if (search) {
+                const haystack = [
+                    c.component_name || "",
+                    c.component_group || "",
+                    c.purl || "",
+                    (c.licenses || []).join(" ")
+                ].join(" ").toLowerCase();
+
+                if (!haystack.includes(search)) return false;
+            }
+
+            return true;
+        });
+
+        sortData();
+        renderTable();
+        renderSummary();
+        renderProjectChart();
+    }
+
+    function sortData() {
+        filteredComponents.sort((a, b) => {
+            let va = a[currentSortKey];
+            let vb = b[currentSortKey];
+
+            if (Array.isArray(va)) va = va.join(", ");
+            if (Array.isArray(vb)) vb = vb.join(", ");
+
+            va = (va === null || va === undefined) ? "" : String(va).toLowerCase();
+            vb = (vb === null || vb === undefined) ? "" : String(vb).toLowerCase();
+
+            if (va < vb) return currentSortDir === "asc" ? -1 : 1;
+            if (va > vb) return currentSortDir === "asc" ? 1 : -1;
+            return 0;
+        });
+    }
+
+
+    async function loadCVE(purl) {
+        const box = document.getElementById("cveResults");
+        if (!purl) {
+            box.innerHTML = `<span class="text-warning">No PURL available for this component – CVE lookup not possible.</span>`;
+            return;
+        }
+
+        box.innerHTML = `<div class="text-muted"><em>Loading CVEs from OSV…</em></div>`;
+
+        try {
+            const body = {
+                // WICHTIG: "package", nicht "pkg"
+                package: {
+                    purl: purl
+                }
+            };
+
+            const res = await fetch("https://api.osv.dev/v1/query", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(body)
+            });
+
+            if (!res.ok) {
+                const text = await res.text();
+                console.error("OSV error response:", res.status, text);
+                box.innerHTML = `<span class="text-danger">Error while querying OSV (${res.status}).</span>`;
+                return;
+            }
+
+            const data = await res.json();
+
+            if (!data.vulns || data.vulns.length === 0) {
+                box.innerHTML = `<span class="text-success">No known CVEs for this PURL 🎉</span>`;
+                return;
+            }
+
+            const vulns = data.vulns;
+
+            // kleine Severity-Statistik
+            let critical = 0, high = 0, medium = 0, low = 0;
+            vulns.forEach(v => {
+                const sev = (v.severity && v.severity[0]) ? parseFloat(v.severity[0].score) : null;
+                if (sev !== null) {
+                    if (sev >= 9.0) critical++;
+                    else if (sev >= 7.0) high++;
+                    else if (sev >= 4.0) medium++;
+                    else low++;
+                } else {
+                    low++;
+                }
+            });
+
+            let html = `
+              <div class="mb-2">
+                <strong>${vulns.length}</strong> CVE(s) found for <code>${purl}</code><br/>
+                <span class="badge bg-danger me-1">Critical: ${critical}</span>
+                <span class="badge bg-warning text-dark me-1">High: ${high}</span>
+                <span class="badge bg-info text-dark me-1">Medium: ${medium}</span>
+                <span class="badge bg-secondary me-1">Low/Unknown: ${low}</span>
+              </div>
+              <hr/>
+              <div class="list-group">
+            `;
+
+            vulns.forEach(v => {
+                const id = v.id;
+                const summary = v.summary || v.details || "No summary available.";
+                const url = `https://osv.dev/vulnerability/${id}`;
+
+                const sevObj = (v.severity && v.severity[0]) ? v.severity[0] : null;
+                let sevLabel = "N/A";
+                let sevScore = null;
+                let sevClass = "bg-secondary";
+
+                if (sevObj && sevObj.score) {
+                    sevScore = parseFloat(sevObj.score);
+                    sevLabel = `${sevObj.score} (${sevObj.type})`;
+
+                    if (sevScore >= 9.0) sevClass = "bg-danger";
+                    else if (sevScore >= 7.0) sevClass = "bg-warning text-dark";
+                    else if (sevScore >= 4.0) sevClass = "bg-info text-dark";
+                    else sevClass = "bg-secondary";
+                }
+
+                // grobe affected ranges
+                let affectedInfo = "";
+                if (v.affected && v.affected.length > 0) {
+                    const ranges = [];
+                    v.affected.forEach(a => {
+                        (a.ranges || []).forEach(r => {
+                            if (r.type === "ECOSYSTEM" || r.type === "SEMVER") {
+                                const events = r.events || [];
+                                const intro = events.find(e => e.introduced)?.introduced;
+                                const fixed = events.find(e => e.fixed)?.fixed;
+                                let label = "";
+                                if (intro && fixed) label = `${intro} – ${fixed}`;
+                                else if (intro && !fixed) label = `>= ${intro}`;
+                                else if (!intro && fixed) label = `<= ${fixed}`;
+                                if (label) ranges.push(label);
+                            }
+                        });
+                    });
+                    if (ranges.length > 0) {
+                        affectedInfo = `<div class="small text-muted mt-1"><strong>Affected ranges:</strong> ${ranges.join(", ")}</div>`;
+                    }
+                }
+
+                html += `
+                <a href="${url}" target="_blank" class="list-group-item list-group-item-action mb-1">
+                  <div class="d-flex w-100 justify-content-between">
+                    <h6 class="mb-1">${id}</h6>
+                    <span class="badge ${sevClass}">${sevLabel}</span>
+                  </div>
+                  <p class="mb-1">${escapeHtml(summary)}</p>
+                  ${affectedInfo}
+                </a>
+              `;
+            });
+
+            html += `</div>`;
+            box.innerHTML = html;
+
+        } catch (err) {
+            console.error(err);
+            box.innerHTML = `<span class="text-danger">Error while querying OSV (see console).</span>`;
+        }
+    }
+
+
+    function openDetailModal(c) {
+        const body = document.getElementById("detailModalBody");
+
+        body.innerHTML = `
+            <div class="mb-3">
+            <p>
+                <small class="text-muted">Project:</small> <br> ${c.project_name}
+            </p>
+            <p>
+              <small class="text-muted">Component:</small> <br> ${c.component_name}
+            </p>
+            <p>
+              <small class="text-muted">Version:</small> <br> ${c.component_version}
+            </p>
+            <p>
+              <small class="text-muted">Group:</small> <br> ${c.component_group}
+            </p>
+            <p>
+              <small class="text-muted">PURL:</small> <br> <code>${c.purl}</code>
+            </p>
+            <p>
+              <small class="text-muted">Licenses:</small> <br> ${(c.licenses || []).join(", ")}
+            </p>
+
+            </div>
+
+            <hr>
+
+            <div>
+              <button class="btn btn-sm btn-primary" onclick="loadCVE('${c.purl}')">Check CVEs</button>
+              <button class="btn btn-sm btn-secondary" onclick="window.location.href='graph.html?sbom=' + encodeURIComponent('${c.sbom_path}')">Show Dependency Graph</button>
+            </div>
+
+            <div id="cveResults" class="mt-3"></div>
+
+          `;
+
+        const modal = new bootstrap.Modal(document.getElementById("detailModal"));
+        modal.show();
+    }
+
+
+    function renderTable() {
+        tableBodyEl.innerHTML = "";
+
+        filteredComponents.forEach(c => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td>${c.project_name || ""}</td>
+                <td>${c.component_name || ""}</td>
+                <td>${c.component_version || ""}</td>
+                <td>${c.component_group || ""}</td>
+                <td>${renderLicenses(c.licenses)}</td>
+                <td>${c.purl || ""}</td>
+                <td>${c.project_group || ""}</td>
+                <td><span class="sbom-path">${c.sbom_path || ""}</span></td>
+              `;
+            tr.addEventListener("click", () => openDetailModal(c));
+            tableBodyEl.appendChild(tr);
+        });
+    }
+
+    function renderLicenses(licenses) {
+        if (!licenses || licenses.length === 0) return "-";
+        return licenses
+            .map(l => `<span class="badge text-bg-secondary me-1">${l}</span>`)
+            .join("");
+    }
+
+    function renderSummary() {
+        const totalComponents = allComponents.length;
+        const shownComponents = filteredComponents.length;
+
+        const allProjects = new Set(allComponents.map(c => c.project_name || "Unknown"));
+        const shownProjects = new Set(filteredComponents.map(c => c.project_name || "Unknown"));
+
+        const uniqueComponentKeysAll = new Set(
+            allComponents.map(c => `${c.component_group}|${c.component_name}`)
+        );
+        const uniqueComponentKeysShown = new Set(
+            filteredComponents.map(c => `${c.component_group}|${c.component_name}`)
+        );
+
+        summaryEl.textContent =
+            `Showing ${shownComponents} of ${totalComponents} components ` +
+            `(${shownProjects.size}/${allProjects.size} projects, ` +
+            `${uniqueComponentKeysShown.size}/${uniqueComponentKeysAll.size} unique components).`;
+    }
+
+    function renderDriftAnalysis() {
+        const driftBox = document.getElementById("driftResults");
+        if (!driftBox) {
+            console.warn("[DRIFT] Element #driftResults not found");
+            return;
+        }
+
+        // Map: key = group|name, value = { versions: Set, projects: Set }
+        const driftMap = {};
+
+        allComponents.forEach(c => {
+            const name = c.component_name || "";
+            if (!name) return;
+
+            const group = c.component_group || "";
+            const key = `${group}|${name}`;
+            const version = c.component_version || "";
+            const project = c.project_name || "Unknown";
+
+            if (!driftMap[key]) {
+                driftMap[key] = {
+                    group,
+                    name,
+                    versions: new Set(),
+                    projectsPerVersion: {}
+                };
+            }
+
+            driftMap[key].versions.add(version);
+
+            if (!driftMap[key].projectsPerVersion[version]) {
+                driftMap[key].projectsPerVersion[version] = new Set();
+            }
+            driftMap[key].projectsPerVersion[version].add(project);
+        });
+
+        // Nur die Komponenten, die mehr als eine Version haben
+        const driftEntries = Object.values(driftMap).filter(entry => entry.versions.size > 1);
+
+        if (driftEntries.length === 0) {
+            driftBox.innerHTML = `<span class="text-success">No version drift detected across projects.</span>`;
+            return;
+        }
+
+        // Sortiere nach Anzahl Versionen (größter Drift zuerst)
+        driftEntries.sort((a, b) => b.versions.size - a.versions.size);
+
+        let html = `
+            <div class="mb-2">
+              Detected <strong>${driftEntries.length}</strong> component(s) with version drift across projects.
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>Component</th>
+                    <th>Versions</th>
+                    <th>Projects per version</th>
+                  </tr>
+                </thead>
+                <tbody>
+          `;
+
+        driftEntries.forEach(entry => {
+            const verList = Array.from(entry.versions).sort();
+            const versionDetails = verList.map(v => {
+                const projects = Array.from(entry.projectsPerVersion[v] || []).sort();
+                return {
+                    version: v,
+                    projects
+                };
+            });
+
+            html += `
+              <tr>
+                <td>
+                  <strong>${entry.name}</strong><br/>
+                  <span class="text-muted small">${entry.group || ""}</span>
+                </td>
+                <td>
+                  ${verList.map(v => `<span class="badge bg-secondary me-1 mb-1">${v || "(no version)"}</span>`).join(" ")}
+                </td>
+                <td>
+                  ${versionDetails.map(vd => `
+                    <div class="mb-1">
+                      <span class="badge bg-light text-dark me-1">${vd.version || "(no version)"}</span>
+                      <span class="small">${vd.projects.join(", ")}</span>
+                    </div>
+                  `).join("")}
+                </td>
+              </tr>
+            `;
+        });
+
+        html += `
+                </tbody>
+              </table>
+            </div>
+          `;
+
+        driftBox.innerHTML = html;
+    }
+
+
+    function renderProjectChart() {
+        const canvas = document.getElementById("projectChart");
+        if (!canvas) {
+            console.warn("projectChart canvas not found");
+            return;
+        }
+
+        const counts = {};
+        filteredComponents.forEach(c => {
+            const p = c.project_name || "Unknown";
+            counts[p] = (counts[p] || 0) + 1;
+        });
+
+        const labels = Object.keys(counts).sort();
+        const data = labels.map(l => counts[l]);
+
+        // Wenn keine Daten → nichts zeichnen, aber auch keinen Fehler
+        if (labels.length === 0) {
+            if (projectChart) {
+                projectChart.destroy();
+                projectChart = null;
+            }
+            return;
+        }
+
+        const chartData = {
+            labels,
+            datasets: [
+                {
+                    label: "Components",
+                    data,
+                    borderWidth: 1
+                }
+            ]
+        };
+
+        const chartOptions = {
+            responsive: true,
+            plugins: {
+                legend: {display: false}
+            },
+            scales: {
+                x: {ticks: {autoSkip: false}},
+                y: {beginAtZero: true}
+            }
+        };
+
+        if (projectChart) {
+            projectChart.data = chartData;
+            projectChart.options = chartOptions;
+            projectChart.update();
+        } else {
+            projectChart = new Chart(canvas, {
+                type: "bar",
+                data: chartData,
+                options: chartOptions
+            });
+        }
+    }
+
+    function calculateHealthScore(projectName) {
+        const comps = allComponents.filter(c => c.project_name === projectName);
+
+        const score = {
+            componentCount: comps.length,
+            driftIssues: 0,
+            riskyLicenses: 0
+        };
+
+        const risky = ["GPL", "AGPL", "LGPL", "CC-BY-SA"];
+        const versionMap = {};
+
+        comps.forEach(c => {
+            if (!versionMap[c.component_name]) versionMap[c.component_name] = new Set();
+            versionMap[c.component_name].add(c.component_version);
+
+            (c.licenses || []).forEach(l => {
+                if (risky.includes(l)) score.riskyLicenses++;
+            });
+        });
+
+        Object.values(versionMap).forEach(v => {
+            if (v.size > 1) score.driftIssues++;
+        });
+
+        // simple scoring logic:
+        let health = 100;
+        health -= score.driftIssues * 5;
+        health -= score.riskyLicenses * 2;
+
+        return Math.max(10, health);
+    }
+
+    let graphInstance = null;
+
+    async function loadDependencyGraph(sbomPath) {
+        const card = document.getElementById("graphCard");
+        const container = document.getElementById("dependencyGraph");
+
+        if (!sbomPath) {
+            card.style.display = "block";
+            container.innerHTML = `<span class="text-warning">No SBOM path available for this component.</span>`;
+            return;
+        }
+
+        card.style.display = "block";
+        container.innerHTML = `<span class="text-muted"><em>Loading dependency graph…</em></span>`;
+
+        try {
+            // Wichtig: sboms/ + SBOM-Pfad (mit /, nicht \)
+            const res = await fetch(`sboms/${sbomPath}`);
+            if (!res.ok) {
+                container.innerHTML = `<span class="text-danger">Could not load SBOM (${res.status}). Check path: sboms/${sbomPath}</span>`;
+                return;
+            }
+
+            const sbom = await res.json();
+
+            const components = sbom.components || [];
+            const dependencies = sbom.dependencies || [];
+
+            if (!dependencies.length) {
+                container.innerHTML = `<span class="text-muted">This SBOM does not contain a dependency graph (no <code>dependencies</code> section).</span>`;
+                return;
+            }
+
+            // Map bom-ref -> human readable label
+            const refToLabel = {};
+            components.forEach(c => {
+                const ref = c["bom-ref"] || c.purl || c.name;
+                const label = c.name
+                    ? `${c.name}${c.version ? "@" + c.version : ""}`
+                    : ref;
+                refToLabel[ref] = label;
+            });
+
+            const nodeSet = new Set();
+            const links = [];
+
+            dependencies.forEach(d => {
+                const src = d.ref;
+                if (!src) return;
+                nodeSet.add(src);
+
+                (d.dependsOn || []).forEach(tgt => {
+                    nodeSet.add(tgt);
+                    links.push({source: src, target: tgt});
+                });
+            });
+
+            const nodes = Array.from(nodeSet).map(ref => ({
+                id: ref,
+                name: refToLabel[ref] || ref
+            }));
+
+            // Clear previous graph instance if exists
+            container.innerHTML = "";
+            graphInstance = ForceGraph()(container)
+                .graphData({nodes, links})
+                .nodeId("id")
+                .nodeLabel("name")
+                .nodeAutoColorBy("id")
+                .linkDirectionalArrowLength(4)
+                .linkDirectionalArrowRelPos(1)
+                .linkCurvature(0.1);
+
+        } catch (err) {
+            console.error(err);
+            container.innerHTML = `<span class="text-danger">Error while building dependency graph (see console).</span>`;
+        }
+    }
+
+
+    loadData();
+    renderDriftAnalysis();
+
+    function escapeHtml(str) {
+        if (!str) return "";
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+    }
+
+
+</script>
+
+
+</body>
+</html>

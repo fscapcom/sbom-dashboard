@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>SBOM Version Drift</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet"
+          integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+</head>
+<body>
+
+<header>
+    <nav class="navbar navbar-expand-lg bg-body-tertiary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="index.html">SBOM Dashboard</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+                    aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" aria-current="page" href="index.html">Overview</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="drift.html">Version Drift</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="graph.html">Dependency Graph</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+</header>
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col">
+            <h3 class="my-3">Version Drift Analyzer</h3>
+            <div id="driftResults">Loading…</div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    const DATA_URL = "data/components.json";
+
+    async function initDrift() {
+        const driftBox = document.getElementById("driftResults");
+
+        try {
+            const res = await fetch(DATA_URL, {cache: "no-store"});
+            if (!res.ok) {
+                driftBox.textContent = "Error loading components.json";
+                return;
+            }
+
+            const allComponents = await res.json();
+            console.log("[DRIFT] Loaded components:", allComponents.length);
+
+            const driftEntries = computeDrift(allComponents);
+            driftBox.innerHTML = renderDriftHTML(driftEntries);
+
+        } catch (e) {
+            console.error(e);
+            driftBox.textContent = "Error while computing drift (see console).";
+        }
+    }
+
+    function computeDrift(allComponents) {
+        // Map: key = group|name, value = { group, name, versions: Set, projectsPerVersion, purlPerVersion }
+        const driftMap = {};
+
+        allComponents.forEach(c => {
+            const name = c.component_name || "";
+            if (!name) return;
+
+            const group = c.component_group || "";
+            const key = `${group}|${name}`;
+            const version = c.component_version || "";
+            const project = c.project_name || "Unknown";
+            const purl = c.purl || "";
+
+            if (!driftMap[key]) {
+                driftMap[key] = {
+                    group,
+                    name,
+                    versions: new Set(),
+                    projectsPerVersion: {},
+                    purlPerVersion: {}
+                };
+            }
+
+            const entry = driftMap[key];
+
+            entry.versions.add(version);
+
+            if (!entry.projectsPerVersion[version]) {
+                entry.projectsPerVersion[version] = new Set();
+            }
+            entry.projectsPerVersion[version].add(project);
+
+            // Merke dir zu jeder Version ein PURL (das erste gefundene reicht für CVE-Lookup)
+            if (purl && !entry.purlPerVersion[version]) {
+                entry.purlPerVersion[version] = purl;
+            }
+        });
+
+        // Nur Komponenten mit mehr als einer Version
+        const driftEntries = Object.values(driftMap).filter(entry => entry.versions.size > 1);
+
+        // Für jede Komponente: empfohlene Version & Anzahl veralteter Projekte berechnen
+        driftEntries.forEach(entry => {
+            const verList = Array.from(entry.versions).sort(); // simple sort, reicht für Übersicht
+            const latest = verList[verList.length - 1];        // "höchste" Version als empfohlen
+
+            entry.recommendedVersion = latest;
+
+            const outdatedProjects = new Set();
+            Object.entries(entry.projectsPerVersion).forEach(([v, projectsSet]) => {
+                if (v !== latest) {
+                    projectsSet.forEach(p => outdatedProjects.add(p));
+                }
+            });
+
+            entry.outdatedProjectsCount = outdatedProjects.size;
+        });
+
+        // Sortierung: zuerst Komponenten mit den meisten veralteten Projekten, dann nach Anzahl Versionen
+        driftEntries.sort((a, b) => {
+            if (b.outdatedProjectsCount !== a.outdatedProjectsCount) {
+                return b.outdatedProjectsCount - a.outdatedProjectsCount;
+            }
+            return b.versions.size - a.versions.size;
+        });
+
+        return driftEntries;
+    }
+
+    function renderDriftHTML(driftEntries) {
+        if (driftEntries.length === 0) {
+            return `<span class="text-success">No version drift detected across projects.</span>`;
+        }
+
+        let html = `
+        <div class="mb-3">
+          Detected <strong>${driftEntries.length}</strong> component(s) with version drift across projects.
+          <br/>
+          <span class="text-muted small">
+            <span class="badge text-bg-success">Green</span> = recommended (latest) version <br> <span class="badge text-bg-danger">Red</span> = outdated versions.
+          </span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-bordered align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Versions</th>
+                <th>Projects per version</th>
+                <th>Outdated projects</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+        driftEntries.forEach((entry, rowIdx) => {
+            const verList = Array.from(entry.versions).sort();
+            const latest = entry.recommendedVersion;
+
+            // Details je Version: welche Projekte nutzen sie?
+            const versionDetails = verList.map(v => {
+                const projects = Array.from(entry.projectsPerVersion[v] || []).sort();
+                return {version: v, projects};
+            });
+
+            // Outdated-Projekte zählen (werden schon in computeDrift berechnet)
+            const outdatedCount = entry.outdatedProjectsCount || 0;
+
+            html += `
+              <tr>
+                <td>
+                  <strong>${entry.name}</strong><br/>
+                  <span class="text-muted small">${entry.group || ""}</span>
+                  <p class="small text-muted">
+                    Recommended version: <br> <span class="badge bg-success">${latest || "(none)"}</span>
+                  </p>
+                </td>
+                <td>
+                  ${verList.map(v => {
+                        const isLatest = (v === latest);
+                        const badgeClass = isLatest ? "bg-success" : "bg-danger";
+                        return `<span class="badge ${badgeClass} me-1 mb-1">${v || "(no version)"}</span>`;
+                    }).join("")}
+                </td>
+                <td>
+                  ${versionDetails.map((vd, i) => {
+                        const isLatest = (vd.version === latest);
+                        const badgeClass = isLatest ? "bg-success" : "bg-danger";
+                        const purl = entry.purlPerVersion[vd.version] || "";
+
+                        const cveButton = purl
+                            ? `<button class="btn btn-sm btn-outline-secondary ms-1"
+                                 onclick="loadDriftCVE('drift-cve-${rowIdx}-${i}', '${purl}')">
+                           CVEs
+                         </button>`
+                            : "";
+
+                        return `
+                      <div class="mb-1">
+                        <span class="badge ${badgeClass} me-1 mb-1">
+                          ${vd.version || "(no version)"}
+                        </span>
+                        <span class="small">${vd.projects.join(", ")}</span>
+                        ${cveButton}
+                        <div class="small mt-1" id="drift-cve-${rowIdx}-${i}"></div>
+                      </div>
+                    `;
+                    }).join("")}
+                </td>
+                <td>
+                  <span class="badge ${outdatedCount > 0 ? "bg-warning text-dark" : "bg-success"}">
+                    ${outdatedCount}
+                  </span>
+                </td>
+              </tr>
+            `;
+                });
+
+                html += `
+                </tbody>
+              </table>
+            </div>
+          `;
+
+        return html;
+    }
+
+    async function loadDriftCVE(targetId, purl) {
+        const box = document.getElementById(targetId);
+        if (!box) {
+            console.warn("[DRIFT-CVE] Target element not found:", targetId);
+            return;
+        }
+
+        if (!purl) {
+            box.innerHTML = `<span class="text-warning">No PURL available for this version.</span>`;
+            return;
+        }
+
+        box.innerHTML = `<span class="text-muted"><em>Loading CVEs from OSV…</em></span>`;
+
+        try {
+            const body = {
+                package: {
+                    purl: purl
+                }
+            };
+
+            const res = await fetch("https://api.osv.dev/v1/query", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(body)
+            });
+
+            if (!res.ok) {
+                const text = await res.text();
+                console.error("[DRIFT-CVE] OSV error:", res.status, text);
+                box.innerHTML = `<span class="text-danger">Error while querying OSV (${res.status}).</span>`;
+                return;
+            }
+
+            const data = await res.json();
+
+            if (!data.vulns || data.vulns.length === 0) {
+                box.innerHTML = `<span class="text-success">No known CVEs for this version 🎉</span>`;
+                return;
+            }
+
+            const vulns = data.vulns;
+
+            let critical = 0, high = 0, medium = 0, low = 0;
+            vulns.forEach(v => {
+                const sev = (v.severity && v.severity[0]) ? parseFloat(v.severity[0].score) : null;
+                if (sev !== null) {
+                    if (sev >= 9.0) critical++;
+                    else if (sev >= 7.0) high++;
+                    else if (sev >= 4.0) medium++;
+                    else low++;
+                } else {
+                    low++;
+                }
+            });
+
+            let html = `
+      <div class="mt-1">
+        <span class="badge bg-danger me-1">Critical: ${critical}</span>
+        <span class="badge bg-warning text-dark me-1">High: ${high}</span>
+        <span class="badge bg-info text-dark me-1">Medium: ${medium}</span>
+        <span class="badge bg-secondary me-1">Low/Unknown: ${low}</span>
+      </div>
+    `;
+
+            // Optional: erste 3 CVEs als Kurzliste
+            html += `<ul class="small mt-1 mb-0">`;
+            vulns.slice(0, 3).forEach(v => {
+                const id = v.id;
+                const summary = v.summary || v.details || "No summary.";
+                const url = `https://osv.dev/vulnerability/${id}`;
+                html += `<li><a href="${url}" target="_blank">${id}</a>: ${escapeHtml(summary)}</li>`;
+            });
+            if (vulns.length > 3) {
+                html += `<li>… ${vulns.length - 3} more</li>`;
+            }
+            html += `</ul>`;
+
+            box.innerHTML = html;
+
+        } catch (err) {
+            console.error("[DRIFT-CVE] Exception:", err);
+            box.innerHTML = `<span class="text-danger">Error while querying OSV (see console).</span>`;
+        }
+    }
+
+    function escapeHtml(str) {
+        if (!str) return "";
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+    }
+
+    initDrift();
+</script>
+
+</body>
+</html>

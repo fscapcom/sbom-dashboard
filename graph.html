@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>SBOM Dependency Graph</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet"
+          integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/force-graph@1.51.0/dist/force-graph.min.js"></script>
+</head>
+<body>
+
+<header>
+    <nav class="navbar navbar-expand-lg bg-body-tertiary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="index.html">SBOM Dashboard</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+                    aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" aria-current="page" href="index.html">Overview</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="drift.html">Version Drift</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="graph.html">Dependency Graph</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+</header>
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col">
+            <h3 class="my-3">Dependency Graph</h3>
+
+            <div class="mb-3">
+                <label class="form-label" for="sbomSelect">Select SBOM</label>
+                <select id="sbomSelect" class="form-select"></select>
+            </div>
+
+            <div id="graphContainer"></div>
+        </div>
+    </div>
+</div>
+
+<script src="common.js"></script>
+
+
+<script>
+    let graphInstance;
+
+    async function initGraph() {
+        const all = await loadAllComponents();
+        const sboms = Array.from(new Set(all.map(c => c.sbom_path))).sort();
+
+        const sel = document.getElementById("sbomSelect");
+        sboms.forEach(s => {
+            const opt = document.createElement("option");
+            opt.value = s;
+            opt.textContent = s;
+            sel.appendChild(opt);
+        });
+
+        sel.addEventListener("change", () => showGraph(sel.value));
+
+        if (sboms.length > 0) showGraph(sboms[0]);
+    }
+
+    async function showGraph(sbomPath) {
+        const container = document.getElementById("graphContainer");
+        container.innerHTML = "<em>Loading SBOM…</em>";
+
+        const res = await fetch("sboms/" + sbomPath);
+        if (!res.ok) {
+            container.innerHTML = "Failed to load SBOM.";
+            return;
+        }
+
+        const sbom = await res.json();
+
+        container.innerHTML = "";
+
+        // Graph erstellen aus deinem existierenden Code:
+        const deps = sbom.dependencies || [];
+        const comps = sbom.components || [];
+
+        if (!deps.length) {
+            container.innerHTML = "This SBOM has no dependency graph.";
+            return;
+        }
+
+        // Build ForceGraph nodes & links
+        const refToLabel = {};
+        comps.forEach(c => {
+            const ref = c["bom-ref"] || c.purl || c.name;
+            const label = c.name + (c.version ? "@" + c.version : "");
+            refToLabel[ref] = label;
+        });
+
+        const nodes = [];
+        const links = [];
+        const nodeSet = new Set();
+
+        deps.forEach(d => {
+            nodeSet.add(d.ref);
+            (d.dependsOn || []).forEach(t => {
+                nodeSet.add(t);
+                links.push({source: d.ref, target: t});
+            });
+        });
+
+        nodeSet.forEach(id => {
+            nodes.push({id, name: refToLabel[id] || id});
+        });
+
+        graphInstance = ForceGraph()(container)
+            .graphData({nodes, links})
+            .nodeLabel("name")
+            .nodeAutoColorBy("id")
+            .linkDirectionalArrowLength(3)
+            .linkDirectionalArrowRelPos(1)
+            .onNodeClick(node => alert(node.name));
+    }
+
+    initGraph();
+</script>
+
+</body>
+</html>
