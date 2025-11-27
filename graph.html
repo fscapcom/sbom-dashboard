@@ -123,17 +123,22 @@
         });
 
         graphInstance = ForceGraph()(container)
-            .graphData({nodes, links})
+            .graphData({ nodes, links })
+            .nodeId("id")
             .nodeLabel("name")
             .nodeAutoColorBy("id")
-            .linkDirectionalArrowLength(3)
-            .linkDirectionalArrowRelPos(1)
-            .onNodeClick(node => alert(node.name));
+            // Dark-Mode-Tweaks:
+            // .backgroundColor('#111827')                      // dunkler Hintergrund
+            .linkColor(() => 'rgba(227,227,227,0.7)')         // helle Links (fast weiß)
+            .linkWidth(1.5)                                     // etwas dicker
+            .linkDirectionalArrowLength(6)                      // größere Pfeile
+            .linkDirectionalArrowRelPos(1)                      // Pfeil am Ende
+            .linkDirectionalArrowColor(() => 'rgba(227,227,227,0.7)')
+            .linkCurvature(0.1);
     }
 
     initGraph();
 </script>
 
 </body>
-
 </html>
