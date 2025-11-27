@@ -47,15 +47,20 @@
                 <select id="sbomSelect" class="form-select"></select>
             </div>
 
+        </div>
+    </div>
+    <div class="row">
+        <div class="col">
             <div id="graphContainer"></div>
         </div>
     </div>
 </div>
 
 <script src="common.js"></script>
-
-
-<script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+        crossorigin="anonymous"></script>
+<script type="text/javascript">
     let graphInstance;
 
     async function initGraph() {
@@ -123,7 +128,7 @@
         });
 
         graphInstance = ForceGraph()(container)
-            .graphData({ nodes, links })
+            .graphData({nodes, links})
             .nodeId("id")
             .nodeLabel("name")
             .nodeAutoColorBy("id")
