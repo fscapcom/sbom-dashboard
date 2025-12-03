@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>SBOM Dependency Tree</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet"
+          integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+
+    <style>
+        body {
+            background-color: #020617;
+            color: #e5e7eb;
+        }
+
+        /* Tree Layout */
+        .tree {
+            list-style: none;
+            margin: 0;
+            padding-left: 0.75rem;
+            position: relative;
+            font-size: 0.9rem;
+        }
+
+        .tree ul {
+            list-style: none;
+            margin: 0;
+            padding-left: 0.75rem;
+            position: relative;
+        }
+
+        /* Vertikale Linie links vom Unterbaum */
+        .tree ul::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0.35rem;
+            border-left: 1px solid #4b5563;
+        }
+
+        .tree-item {
+            position: relative;
+            padding-left: 0.75rem;
+        }
+
+        /* Horizontale Linie vom Stamm zur Node */
+        .tree-item::before {
+            content: "";
+            position: absolute;
+            top: 0.9rem;
+            left: 0.35rem;
+            width: 0.4rem;
+            border-top: 1px solid #4b5563;
+        }
+
+        .tree-node {
+            cursor: pointer;
+            display: inline-block;
+            padding: 2px 4px;
+            border-radius: 4px;
+            transition: background-color 0.15s ease;
+        }
+
+        .tree-node:hover {
+            background-color: rgba(148, 163, 184, 0.2);
+        }
+
+        .tree-children {
+            margin-top: 2px;
+            display: none;
+        }
+
+        .tree-node.open {
+            font-weight: 500;
+        }
+
+        .tree-node span.label-text {
+            margin-left: 4px;
+        }
+
+        .tree-toggle-arrow {
+            display: inline-block;
+            width: 0.9rem;
+        }
+
+        .muted-ref {
+            color: #9ca3af;
+            font-size: 0.8rem;
+            margin-left: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <nav class="navbar navbar-expand-lg bg-body-tertiary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="index.html">SBOM Dashboard</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+                    aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" aria-current="page" href="index.html">Overview</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="drift.html">Version Drift</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="graph.html">Dependency Graph</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="tree.html">Dependency Tree</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+</header>
+
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col">
+            <h3 class="my-3">Dependency Tree</h3>
+            <label class="form-label" for="sbomSelect">Select SBOM</label>
+            <select id="sbomSelect" class="form-select"></select>
+        </div>
+    </div>
+    <div class="row">
+        <div class="col">
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div id="treeContainer">Select an SBOM above.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+        crossorigin="anonymous"></script>
+<script type="text/javascript">
+    const DATA_URL = "data/components.json";
+
+    async function initTreePage() {
+        const selectEl = document.getElementById("sbomSelect");
+
+        const res = await fetch(DATA_URL, {cache: "no-store"});
+        const all = await res.json();
+
+        const sbomPaths = [...new Set(all.map(c => c.sbom_path))].sort();
+        sbomPaths.forEach(p => {
+            const opt = document.createElement("option");
+            opt.value = p;
+            opt.textContent = p;
+            selectEl.appendChild(opt);
+        });
+
+        selectEl.addEventListener("change", () => loadSBOMTree(selectEl.value));
+        if (sbomPaths.length) loadSBOMTree(sbomPaths[0]);
+    }
+
+    async function loadSBOMTree(sbomPath) {
+        const treeContainer = document.getElementById("treeContainer");
+        treeContainer.innerHTML = "<em>Loading SBOM…</em>";
+
+        const res = await fetch("sboms/" + sbomPath);
+        if (!res.ok) {
+            treeContainer.innerHTML = "<span class='text-danger'>Failed to load SBOM</span>";
+            return;
+        }
+
+        const sbom = await res.json();
+        const components = sbom.components || [];
+        const deps = sbom.dependencies || [];
+
+        if (!deps.length) {
+            treeContainer.innerHTML = "<span class='text-muted'>No dependency tree available (no <code>dependencies</code> section).</span>";
+            return;
+        }
+
+        const refToLabel = {};
+        components.forEach(c => {
+            const ref = c["bom-ref"] || c.purl || c.name;
+            const label = c.name
+                ? c.name + (c.version ? "@" + c.version : "")
+                : ref;
+            refToLabel[ref] = label;
+        });
+
+        const depMap = {};
+        deps.forEach(d => {
+            depMap[d.ref] = d.dependsOn || [];
+        });
+
+        const roots = deps
+            .filter(d => !deps.some(x => (x.dependsOn || []).includes(d.ref)))
+            .map(d => d.ref);
+
+        if (!roots.length) {
+            roots.push(deps[0].ref);
+        }
+
+        treeContainer.innerHTML = "";
+        const rootList = document.createElement("ul");
+        rootList.className = "tree";
+
+        roots.forEach(rootRef => {
+            rootList.appendChild(buildTreeNode(rootRef, refToLabel, depMap));
+        });
+
+        treeContainer.appendChild(rootList);
+    }
+
+    function buildTreeNode(ref, refToLabel, depMap) {
+        const li = document.createElement("li");
+        li.className = "tree-item";
+
+        const labelText = refToLabel[ref] || ref;
+        const node = document.createElement("span");
+        node.className = "tree-node";
+        node.dataset.open = "false";
+
+        const arrow = document.createElement("span");
+        arrow.className = "tree-toggle-arrow";
+        arrow.textContent = "🞂";
+
+        const textSpan = document.createElement("span");
+        textSpan.className = "label-text";
+        textSpan.textContent = labelText;
+
+        const refSpan = document.createElement("span");
+        refSpan.className = "muted-ref";
+        refSpan.textContent = ref !== labelText ? ref : "";
+
+        node.appendChild(arrow);
+        node.appendChild(textSpan);
+        node.appendChild(refSpan);
+
+        const childrenRefs = depMap[ref] || [];
+        let childrenUl = null;
+
+        if (childrenRefs.length > 0) {
+            childrenUl = document.createElement("ul");
+            childrenUl.className = "tree-children";
+
+            childrenRefs.forEach(childRef => {
+                childrenUl.appendChild(buildTreeNode(childRef, refToLabel, depMap));
+            });
+
+            node.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const isOpen = node.dataset.open === "true";
+                node.dataset.open = isOpen ? "false" : "true";
+                node.classList.toggle("open", !isOpen);
+                arrow.textContent = isOpen ? "🞂" : "🞃";
+                childrenUl.style.display = isOpen ? "none" : "block";
+            });
+        } else {
+            // Leaf: kein Arrow nötig
+            arrow.textContent = "•";
+            arrow.style.opacity = 0.6;
+            node.addEventListener("click", (e) => {
+                e.stopPropagation();
+            });
+        }
+
+        li.appendChild(node);
+        if (childrenUl) li.appendChild(childrenUl);
+
+        return li;
+    }
+
+    // Start
+    initTreePage();
+</script>
+</body>
+</html>
