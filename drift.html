@@ -6,6 +6,10 @@
 
     <title>SBOM Version Drift</title>
 
+    <link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon/favicon-16x16.png">
+    <link rel="manifest" href="favicon/site.webmanifest">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet"
           integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
 </head>
@@ -28,10 +32,10 @@
                         <a class="nav-link active" href="drift.html">Version Drift</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="graph.html">Dependency Graph</a>
+                        <a class="nav-link" href="tree.html">Dependency Tree</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="tree.html">Dependency Tree</a>
+                        <a class="nav-link" href="graph.html">Dependency Graph</a>
                     </li>
                 </ul>
             </div>
@@ -197,25 +201,25 @@
                 </td>
                 <td>
                   ${verList.map(v => {
-                        const isLatest = (v === latest);
-                        const badgeClass = isLatest ? "bg-success" : "bg-danger";
-                        return `<span class="badge ${badgeClass} me-1 mb-1">${v || "(no version)"}</span>`;
-                    }).join("")}
+                const isLatest = (v === latest);
+                const badgeClass = isLatest ? "bg-success" : "bg-danger";
+                return `<span class="badge ${badgeClass} me-1 mb-1">${v || "(no version)"}</span>`;
+            }).join("")}
                 </td>
                 <td>
                   ${versionDetails.map((vd, i) => {
-                        const isLatest = (vd.version === latest);
-                        const badgeClass = isLatest ? "bg-success" : "bg-danger";
-                        const purl = entry.purlPerVersion[vd.version] || "";
+                const isLatest = (vd.version === latest);
+                const badgeClass = isLatest ? "bg-success" : "bg-danger";
+                const purl = entry.purlPerVersion[vd.version] || "";
 
-                        const cveButton = purl
-                            ? `<button class="btn btn-sm btn-outline-secondary ms-1"
+                const cveButton = purl
+                    ? `<button class="btn btn-sm btn-outline-secondary ms-1"
                                  onclick="loadDriftCVE('drift-cve-${rowIdx}-${i}', '${purl}')">
                            CVEs
                          </button>`
-                            : "";
+                    : "";
 
-                        return `
+                return `
                       <div class="mb-1">
                         <span class="badge ${badgeClass} me-1 mb-1">
                           ${vd.version || "(no version)"}
@@ -225,7 +229,7 @@
                         <div class="small mt-1" id="drift-cve-${rowIdx}-${i}"></div>
                       </div>
                     `;
-                    }).join("")}
+            }).join("")}
                 </td>
                 <td>
                   <span class="badge ${outdatedCount > 0 ? "bg-warning text-dark" : "bg-success"}">
@@ -234,9 +238,9 @@
                 </td>
               </tr>
             `;
-                });
+        });
 
-                html += `
+        html += `
                 </tbody>
               </table>
             </div>

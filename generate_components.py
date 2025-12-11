@@ -10,7 +10,9 @@ OUTPUT_FILE = OUTPUT_DIR / "components.json"
 
 
 def find_sbom_files(root: Path) -> List[Path]:
-    """Recursively find all JSON files under the SBOM root."""
+    """
+    Recursively find all JSON files under the SBOM root.
+    """
     return [p for p in root.rglob("*.json") if p.is_file()]
 
 
@@ -69,7 +71,9 @@ def extract_components_from_sbom(sbom_path: Path) -> List[Dict[str, Any]]:
 
 
 def infer_project_name_from_path(sbom_path: Path) -> str:
-    """Fallback: derive a project name from the SBOM path."""
+    """
+    Fallback: derive a project name from the SBOM path.
+    """
     try:
         rel = sbom_path.relative_to(SBOM_ROOT)
     except ValueError:
